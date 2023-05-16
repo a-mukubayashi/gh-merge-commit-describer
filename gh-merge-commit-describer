@@ -48,14 +48,6 @@ while true; do
           nodes {
             commit {
               messageHeadline
-              oid
-              associatedPullRequests(first: 1) {
-                nodes {
-                  number
-                  body
-                  bodyHTML
-                }
-              }
             }
           }
           pageInfo {
@@ -85,7 +77,7 @@ while true; do
 done
 
 # Format the merge commits list with individual details and summary tags
-merge_commits_list=$(echo "$merge_commits" | jq -r '.[] | "- [ ] \(.messageHeadline)\(.associatedPullRequests.nodes[0].body)"')
+merge_commits_list=$(echo "$merge_commits" | jq -r '.[] | "- [ ] \(.messageHeadline)"')
 
 # Update the pull request description with the merge commits list
 new_body="$pr_body
