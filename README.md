@@ -1,5 +1,7 @@
 # gh-merge-commit-describer
 
+<!-- test -->
+
 ## Usage
 
 ```
