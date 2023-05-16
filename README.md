@@ -1,0 +1,1 @@
+# gh-merge-commit-describer
