@@ -61,7 +61,7 @@ while true; do
   commits_response=$(gh api graphql -f query="$QUERY")
 
   # Extract and filter the merge commits from the response
-  merge_commits_page=$(echo "$commits_response" | jq '[.data.repository.pullRequest.commits.nodes[].commit | select(.messageHeadline | startswith("Merge"))]')
+  merge_commits_page=$(echo "$commits_response" | jq '[.data.repository.pullRequest.commits.nodes[].commit | select(.messageHeadline | startswith("Merge pull request"))]')
 
   # Append the merge commits to the list
   merge_commits="$merge_commits$merge_commits_page"
