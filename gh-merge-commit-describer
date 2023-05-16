@@ -5,31 +5,105 @@ echo "Hello gh-merge-commit-describer!"
 
 # Snippets to help get started:
 
-# Determine if an executable is in the PATH
-# if ! type -p ruby >/dev/null; then
-#   echo "Ruby not found on the system" >&2
-#   exit 1
-# fi
+# Check if the correct number of arguments is provided (expecting 1 argument)
+if [ $# -ne 1 ]; then
+  echo "Usage: gh pr-merge-commits PR_NUMBER"
+  exit 1
+fi
 
-# Pass arguments through to another command
-# gh issue list "$@" -R cli/cli
+# Store the provided pull request number
+pull_number=$1
 
-# Using the gh api command to retrieve and format information
-# QUERY='
-#   query($endCursor: String) {
-#     viewer {
-#       repositories(first: 100, after: $endCursor) {
-#         nodes {
-#           nameWithOwner
-#           stargazerCount
-#         }
-#       }
-#     }
-#   }
-# '
-# TEMPLATE='
-#   {{- range $repo := .data.viewer.repositories.nodes -}}
-#     {{- printf "name: %s - stargazers: %v\n" $repo.nameWithOwner $repo.stargazerCount -}}
-#   {{- end -}}
-# '
-# exec gh api graphql -f query="${QUERY}" --paginate --template="${TEMPLATE}"
+# Get the repository information (owner and repository name) from the current directory's Git remote
+repo_info=$(git config --get remote.origin.url | perl -ne 'print "$1/$2" if m{github.com[:/]([\w\-]+)/([\w\-]+)\.git}')
+IFS="/" read -ra repo_parts <<< "$repo_info"
+
+# Fetch the pull request ID and body using a GraphQL query
+pr_query="{
+  repository(owner: \"${repo_parts[0]}\", name: \"${repo_parts[1]}\") {
+    pullRequest(number: $pull_number) {
+      id
+      body
+    }
+  }
+}"
+pr_response=$(gh api graphql -f query="$pr_query")
+
+# Extract the pull request ID and body from the response
+pr_id=$(echo "$pr_response" | jq -r '.data.repository.pullRequest.id')
+pr_body=""
+
+# Initialize variables for pagination
+per_page=100
+end_cursor=""
+
+# Fetch all merge commits from the pull request using pagination
+merge_commits=""
+while true; do
+  # Fetch commits with pagination using a GraphQL query
+  QUERY="{
+    repository(owner: \"${repo_parts[0]}\", name: \"${repo_parts[1]}\") {
+      pullRequest(number: $pull_number) {
+        commits(first: $per_page, after: \"$end_cursor\") {
+          nodes {
+            commit {
+              messageHeadline
+              oid
+              associatedPullRequests(first: 1) {
+                nodes {
+                  number
+                  body
+                  bodyHTML
+                }
+              }
+            }
+          }
+          pageInfo {
+            endCursor
+            hasNextPage
+          }
+        }
+      }
+    }
+  }"
+  commits_response=$(gh api graphql -f query="$QUERY")
+
+  # Extract and filter the merge commits from the response
+  merge_commits_page=$(echo "$commits_response" | jq '[.data.repository.pullRequest.commits.nodes[].commit | select(.messageHeadline | startswith("Merge"))]')
+
+  # Append the merge commits to the list
+  merge_commits="$merge_commits$merge_commits_page"
+
+  # Check if there is a next page
+  has_next_page=$(echo "$commits_response" | jq -r '.data.repository.pullRequest.commits.pageInfo.hasNextPage')
+  if [ "$has_next_page" == "false" ]; then
+    break
+  fi
+
+  # Update the end_cursor for the next iteration
+  end_cursor=$(echo "$commits_response" | jq -r '.data.repository.pullRequest.commits.pageInfo.endCursor')
+done
+
+# Format the merge commits list with individual details and summary tags
+merge_commits_list=$(echo "$merge_commits" | jq -r '.[] | "- [ ] \(.messageHeadline)\(.associatedPullRequests.nodes[0].body)"')
+
+# Update the pull request description with the merge commits list
+new_body="$pr_body
+
+## Merge Commits
+
+$merge_commits_list
+"
+
+# Prepare the update mutation for the pull request body
+update_pr_mutation="mutation {
+  updatePullRequest(input: {pullRequestId: \"$pr_id\", body: \"\"\"$new_body\"\"\"}) {
+    clientMutationId
+  }
+}"
+
+# Execute the mutation to update the pull request body
+gh api graphql -f query="$update_pr_mutation" --jq "."
+
+# Print a success message
+echo "Updated PR #$pull_number with merge commits"
